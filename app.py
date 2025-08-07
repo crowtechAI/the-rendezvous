@@ -16,7 +16,7 @@ st.set_page_config(
 try:
     conn = st.connection("turso", type="sql")
 except Exception as e:
-    st.error(f"Failed to connect to the database. Please check your Streamlit Secrets. Error: {e}")
+    st.error(f"Failed to connect to the database. Please check your Streamlit Secrets and requirements.txt. Error: {e}")
     st.stop()
 
 
@@ -73,6 +73,7 @@ def add_event(title, start_time, booker, is_urgent):
 def get_events():
     with conn.session as s:
         results = s.execute("SELECT title, start_time, backgroundColor, borderColor, booker, is_urgent FROM events;").fetchall()
+        # The calendar component needs the key 'start', not 'start_time'
         return [
             {"title": r[0], "start": r[1], "backgroundColor": r[2], "borderColor": r[3], "booker": r[4], "is_urgent": r[5]}
             for r in results
@@ -192,8 +193,5 @@ elif st.session_state.page == "Calendar":
                 st.rerun()
     
     st.markdown("<br>", unsafe_allow_html=True)
-    calendar_events = get_events() # Fetch events for the calendar component
-    # The calendar component needs 'start' not 'start_time'
-    for event in calendar_events:
-        event['start'] = event.pop('start_time')
+    calendar_events = get_events()
     calendar(events=calendar_events)
