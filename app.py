@@ -23,6 +23,7 @@ try:
     client = MongoClient(st.secrets["mongo_uri"], tlsCAFile=certifi.where())
     db = client.get_database("rendezvous")
     events_collection = db["events"]
+    blockouts_collection = db["blockouts"] # New collection for block-outs
     notes_collection = db["love_notes"]
     app_state_collection = db["app_state"]
 except Exception as e:
@@ -31,6 +32,7 @@ except Exception as e:
 
 # --- One-Time Database Setup ---
 def setup_database():
+    """Ensures collections and default state exist."""
     if app_state_collection.count_documents({"key": "partner_names"}) == 0:
         app_state_collection.insert_one({"key": "partner_names", "value": ["Partner 1", "Partner 2"]})
     notes_collection.create_index([("timestamp", -1)])
@@ -52,8 +54,18 @@ def add_event(title, start_time, booker, is_urgent):
         "borderColor": color, "booker": booker, "is_urgent": is_urgent
     })
 
+def add_blockout(title, start_time, end_time, all_day):
+    blockouts_collection.insert_one({
+        "title": title, "start": start_time.isoformat(), "end": end_time.isoformat(),
+        "allDay": all_day, "backgroundColor": "#808B96", "borderColor": "#5D6D7E",
+        "display": "background" # This makes it look like a block
+    })
+
 def get_events():
     return list(events_collection.find())
+
+def get_blockouts():
+    return list(blockouts_collection.find())
 
 def add_love_note(author, message):
     notes_collection.insert_one({
@@ -76,6 +88,7 @@ def get_all_love_notes():
 def mark_notification_as_read(note_id):
     notes_collection.update_one({"_id": ObjectId(note_id)}, {"$set": {"read": True}})
 
+
 # --- Styling ---
 st.markdown("""
 <style>
@@ -92,6 +105,7 @@ st.markdown("""
     .stForm, .fc { background-color: #FFFFFF; border-radius: 10px; padding: 25px; border: 1px solid #EAE0DA; }
 </style>
 """, unsafe_allow_html=True)
+
 
 # --- Page Navigation ---
 if 'page' not in st.session_state: st.session_state.page = "Dashboard"
@@ -164,9 +178,6 @@ if st.session_state.page == "Dashboard":
 
     now = datetime.datetime.now()
     all_events = get_events()
-    
-    # --- FIX IS HERE ---
-    # We add `if 'start' in e` to safely filter out any documents that are missing the 'start' key.
     all_upcoming = sorted(
         [e for e in all_events if 'start' in e and datetime.datetime.fromisoformat(e['start']) > now], 
         key=lambda x: datetime.datetime.fromisoformat(x['start'])
@@ -199,23 +210,52 @@ if st.session_state.page == "Dashboard":
 
 elif st.session_state.page == "Calendar":
     st.title("Our Calendar")
-    with st.form("new_rendezvous", clear_on_submit=True):
-        st.subheader("Plan a New Date")
-        booker = st.selectbox("Who's booking this?", get_partner_names())
-        col1, col2 = st.columns(2)
-        title = col1.text_input("Date Idea", placeholder="e.g., Dinner at our spot")
-        date = col1.date_input("Date")
-        start_time = col2.time_input("Time")
-        if st.form_submit_button("Add to Calendar", use_container_width=True):
-            if title:
-                final_dt = datetime.datetime.combine(date, start_time)
-                add_event(title, final_dt, booker, is_urgent=False)
-                add_booking_notification(f"{booker} planned '{title}'!")
-                st.toast(f"'{title}' added! Your partner will be alerted.")
-                st.rerun()
     
+    with st.expander("Plan a New Date", expanded=True):
+        with st.form("new_rendezvous", clear_on_submit=True):
+            booker = st.selectbox("Who's booking this?", get_partner_names())
+            col1, col2 = st.columns(2)
+            title = col1.text_input("Date Idea", placeholder="e.g., Dinner at our spot")
+            date = col1.date_input("Date")
+            start_time = col2.time_input("Time")
+            if st.form_submit_button("Add to Calendar", use_container_width=True):
+                if title:
+                    final_dt = datetime.datetime.combine(date, start_time)
+                    add_event(title, final_dt, booker, is_urgent=False)
+                    add_booking_notification(f"{booker} planned '{title}'!")
+                    st.toast(f"'{title}' added! Your partner will be alerted.")
+                    st.rerun()
+    
+    # --- NEW: Block-Out Time Feature ---
+    with st.expander("Block Out Time"):
+        with st.form("blockout_form", clear_on_submit=True):
+            title = st.text_input("Reason", placeholder="e.g., Work, Period, Family visit")
+            all_day = st.checkbox("All-day event")
+            
+            col1, col2 = st.columns(2)
+            if all_day:
+                date = col1.date_input("Date")
+                start_dt = datetime.datetime.combine(date, datetime.time.min)
+                end_dt = datetime.datetime.combine(date, datetime.time.max)
+            else:
+                start_date = col1.date_input("Start Date")
+                start_time = col2.time_input("Start Time", value=datetime.time(9,0))
+                end_date = col1.date_input("End Date")
+                end_time = col2.time_input("End Time", value=datetime.time(17,0))
+                start_dt = datetime.datetime.combine(start_date, start_time)
+                end_dt = datetime.datetime.combine(end_date, end_time)
+
+            if st.form_submit_button("Block Out Period", use_container_width=True):
+                if title:
+                    add_blockout(title, start_dt, end_dt, all_day)
+                    st.toast("Time blocked out on the calendar.")
+                    st.rerun()
+
     st.markdown("<br>", unsafe_allow_html=True)
-    calendar(events=get_events())
+    
+    # Combine events and blockouts for the calendar view
+    all_calendar_items = get_events() + get_blockouts()
+    calendar(events=all_calendar_items)
 
 elif st.session_state.page == "Love Notes":
     st.title("Our Love Notes")
