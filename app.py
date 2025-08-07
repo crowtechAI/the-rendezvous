@@ -5,10 +5,7 @@ import json
 from pymongo import MongoClient
 from bson import ObjectId
 import os
-import certifi # Added for robust SSL connection
-
-# --- LOGO CONFIGURATION ---
-LOGO_IMAGE = "logo.png"
+import certifi
 
 # --- App Configuration ---
 st.set_page_config(
@@ -18,11 +15,13 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- Database Connection (MongoDB) ---
+# --- LOGO CONFIGURATION ---
+LOGO_IMAGE = "logo.png"
+
+# --- Database Connection ---
 try:
-    # Use certifi to provide SSL certificates, preventing common connection errors
     client = MongoClient(st.secrets["mongo_uri"], tlsCAFile=certifi.where())
-    db = client.get_database("rendezvous") # Your database name
+    db = client.get_database("rendezvous")
     events_collection = db["events"]
     notes_collection = db["love_notes"]
     app_state_collection = db["app_state"]
@@ -32,13 +31,13 @@ except Exception as e:
 
 # --- One-Time Database Setup ---
 def setup_database():
-    """Ensures collections and default state exist."""
     if app_state_collection.count_documents({"key": "partner_names"}) == 0:
         app_state_collection.insert_one({"key": "partner_names", "value": ["Partner 1", "Partner 2"]})
+    notes_collection.create_index([("timestamp", -1)])
 
 setup_database()
 
-# --- Data Helper Functions (interact with MongoDB) ---
+# --- Data Helper Functions ---
 def get_partner_names():
     doc = app_state_collection.find_one({"key": "partner_names"})
     return doc['value'] if doc else ["Partner 1", "Partner 2"]
@@ -77,7 +76,6 @@ def get_all_love_notes():
 def mark_notification_as_read(note_id):
     notes_collection.update_one({"_id": ObjectId(note_id)}, {"$set": {"read": True}})
 
-
 # --- Styling ---
 st.markdown("""
 <style>
@@ -94,7 +92,6 @@ st.markdown("""
     .stForm, .fc { background-color: #FFFFFF; border-radius: 10px; padding: 25px; border: 1px solid #EAE0DA; }
 </style>
 """, unsafe_allow_html=True)
-
 
 # --- Page Navigation ---
 if 'page' not in st.session_state: st.session_state.page = "Dashboard"
@@ -127,7 +124,6 @@ with st.sidebar:
 if st.session_state.page == "Dashboard":
     st.title("Our Dashboard")
 
-    # --- IN-APP NOTIFICATION SYSTEM ---
     unread_notifications = get_unread_notifications()
     if unread_notifications:
         st.subheader("🔔 New Alerts")
@@ -144,7 +140,6 @@ if st.session_state.page == "Dashboard":
                     st.rerun()
         st.markdown("---")
 
-    # URGENT BOOKING
     st.markdown('<div class="button-urgent">', unsafe_allow_html=True)
     if st.button("Book a Fuck", use_container_width=True):
         st.session_state.show_urgent_booking = not st.session_state.get('show_urgent_booking', False)
@@ -167,10 +162,15 @@ if st.session_state.page == "Dashboard":
 
     st.markdown("---")
 
-    # SPLIT RENDEZVOUS DISPLAY
     now = datetime.datetime.now()
     all_events = get_events()
-    all_upcoming = sorted([e for e in all_events if datetime.datetime.fromisoformat(e['start']) > now], key=lambda x: datetime.datetime.fromisoformat(x['start']))
+    
+    # --- FIX IS HERE ---
+    # We add `if 'start' in e` to safely filter out any documents that are missing the 'start' key.
+    all_upcoming = sorted(
+        [e for e in all_events if 'start' in e and datetime.datetime.fromisoformat(e['start']) > now], 
+        key=lambda x: datetime.datetime.fromisoformat(x['start'])
+    )
     
     urgent_events = [e for e in all_upcoming if e.get("is_urgent")]
     planned_events = [e for e in all_upcoming if not e.get("is_urgent")]
