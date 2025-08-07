@@ -14,7 +14,7 @@ st.set_page_config(
 # --- Database Connection & Initialization ---
 # This establishes a connection to the Turso database defined in your Streamlit Secrets.
 try:
-    conn = st.connection("turso", type="libsql")
+    conn = st.connection("turso", type="sql")
 except Exception as e:
     st.error(f"Failed to connect to the database. Please check your Streamlit Secrets and requirements.txt. Error: {e}")
     st.stop()
