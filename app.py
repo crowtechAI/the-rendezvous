@@ -194,7 +194,7 @@ with dashboard_tab:
     urgent_events = [e for e in all_upcoming if e.get("is_urgent")]
     planned_events = [e for e in all_upcoming if not e.get("is_urgent")]
 
-    st.subheader(" 🍆🌮 💦 Fucks Booked")
+    st.subheader(" 🍆Fucks Booked")
     if not urgent_events:
         st.info("No urgent bookings. Maybe it's time to make one?")
     else:
