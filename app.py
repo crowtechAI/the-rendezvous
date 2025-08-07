@@ -8,10 +8,10 @@ from bson import ObjectId
 import os
 import certifi
 
-# --- App Configuration ---
+# --- App Configuration (Mobile-Optimized) ---
 st.set_page_config(
     page_title="The Rendezvous",
-    page_icon="💋",
+    page_icon="🔥",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -48,7 +48,7 @@ def update_partner_names(p1, p2):
     app_state_collection.update_one({"key": "partner_names"}, {"$set": {"value": [p1, p2]}}, upsert=True)
 
 def add_event(title, start_time, booker, is_urgent):
-    color = "#E74C3C" if is_urgent else "#941a1d" # Changed planned color
+    color = "#E74C3C" if is_urgent else "#D98880"
     events_collection.insert_one({
         "title": title, "start": start_time.isoformat(), "backgroundColor": color,
         "borderColor": color, "booker": booker, "is_urgent": is_urgent
@@ -57,7 +57,7 @@ def add_event(title, start_time, booker, is_urgent):
 def add_blockout(title, start_time, end_time, all_day):
     blockouts_collection.insert_one({
         "title": title, "start": start_time.isoformat(), "end": end_time.isoformat(),
-        "allDay": all_day, "backgroundColor": "#444444", "borderColor": "#333333",
+        "allDay": all_day, "backgroundColor": "#808B96", "borderColor": "#5D6D7E",
         "display": "background"
     })
 
@@ -109,19 +109,20 @@ def get_all_love_notes():
 def mark_notification_as_read(note_id):
     notes_collection.update_one({"_id": ObjectId(note_id)}, {"$set": {"read": True}})
 
-# --- NEW: Sultry Dark Theme Styling ---
+# --- Styling (with Forced Light Theme CSS) ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Lato:wght@400;700&display=swap');
-    
+    /* --- NEW: Force Light Theme --- */
     :root {
-        --primary-color: #941a1d; /* Deep crimson */
-        --background-color: #121212; /* Near-black charcoal */
-        --secondary-background-color: #1E1E1E; /* Lighter charcoal for containers */
-        --text-color: #E0E0E0; /* Soft off-white */
-        --urgent-color: #E74C3C; /* Fiery red */
+        --primary-color: #D98880;
+        --background-color: #FDF8F5;
+        --secondary-background-color: #F4ECE6;
+        --text-color: #34495E;
+        --font: "sans serif";
     }
 
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Lato:wght@400;700&display=swap');
+    
     .stApp { 
         background-color: var(--background-color); 
         color: var(--text-color); 
@@ -129,58 +130,30 @@ st.markdown("""
     }
     
     .block-container { padding: 1rem 1rem 2rem 1rem; }
-    h1, h2, h3 { font-family: 'Playfair+Display', serif; color: var(--text-color); }
+    h1 { font-family: 'Playfair Display', serif; color: #B05A5A; text-align: center; }
+    h2, h3 { font-family: 'Playfair Display', serif; color: #34495E; }
     
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 24px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: transparent;
-        border-radius: 4px 4px 0px 0px;
-        gap: 1px;
-        padding-top: 10px;
-        padding-bottom: 10px;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: var(--secondary-background-color);
-    }
-
     .stButton>button { 
-        border: none;
+        border: 2px solid var(--primary-color);
         border-radius: 8px; 
-        background-color: var(--primary-color); 
-        color: #FFFFFF;
+        background-color: transparent; 
+        color: var(--primary-color); 
         padding: 10px 24px; 
         font-weight: 700; 
         transition: all 0.3s ease-in-out; 
+        text-transform: uppercase; 
+        letter-spacing: 1px; 
     }
     .stButton>button:hover { 
-        box-shadow: 0 0 15px var(--primary-color);
+        background-color: var(--primary-color); 
+        color: #FFFFFF; 
         transform: translateY(-2px); 
     }
     
-    .button-urgent button { 
-        background-color: var(--urgent-color);
-    }
-    .button-urgent button:hover { 
-        box-shadow: 0 0 15px var(--urgent-color);
-    }
+    .button-urgent button { background-color: #E74C3C; color: white; border: none; font-weight: bold; }
+    .button-urgent button:hover { background-color: #C0392B; }
     
-    [data-testid="stForm"], [data-testid="stExpander"], .fc, .st-emotion-cache-1r6slb0 { 
-        background-color: var(--secondary-background-color);
-        border-radius: 10px; 
-        padding: 25px; 
-        border-top: 3px solid var(--primary-color);
-    }
-
-    /* Target generated containers specifically */
-    .st-emotion-cache-1r6slb0 {
-        border: none;
-        border-top: 2px solid var(--primary-color);
-    }
-
+    .stForm, .fc { background-color: #FFFFFF; border-radius: 10px; padding: 25px; border: 1px solid #EAE0DA; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -191,8 +164,9 @@ if os.path.exists(LOGO_IMAGE):
 else:
     st.title("The Rendezvous")
 
-# --- NEW: Mobile-First Tab Navigation with new wording ---
-dashboard_tab, calendar_tab, notes_tab = st.tabs(["🔥 The Boudoir", "📅 Our Agenda", "💌 Whispers"])
+# --- Mobile-First Tab Navigation ---
+dashboard_tab, calendar_tab, notes_tab = st.tabs(["🔥 Dashboard", "📅 Calendar", "💌 Love Notes"])
+
 
 # --- DASHBOARD TAB ---
 with dashboard_tab:
@@ -201,11 +175,11 @@ with dashboard_tab:
     if unread_notifications:
         st.subheader("🔔 New Alerts")
         for notif in unread_notifications:
-            target_page_name = "Whispers" if notif.get("type") == "note" else "Our Agenda"
-            button_text = "Read Whisper" if target_page_name == "Whispers" else "View Booking"
+            target_page = "Love Notes" if notif.get("type") == "note" else "Calendar"
+            button_text = "Read Note" if target_page == "Love Notes" else "View Booking"
             if st.button(f"{notif['message']} → {button_text}", key=f"view_{notif['_id']}", use_container_width=True):
                 mark_notification_as_read(ObjectId(notif['_id']))
-                st.toast(f"Marked as read. Go to {target_page_name} to see.")
+                st.toast(f"Marked as read. Go to {target_page} to see.")
                 st.rerun()
         st.markdown("---")
 
@@ -253,8 +227,7 @@ with dashboard_tab:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # NEW: Renamed section
-    st.subheader("🌹 Rendezvous")
+    st.subheader("📅 Planned Dates")
     if not planned_events:
         st.info("No planned dates on the calendar.")
     else:
@@ -266,13 +239,13 @@ with dashboard_tab:
 
 # --- CALENDAR TAB ---
 with calendar_tab:
-    with st.expander("Plan a Rendezvous", expanded=True):
+    with st.expander("Plan a New Date", expanded=True):
         with st.form("new_rendezvous", clear_on_submit=True):
             booker = st.selectbox("Who's booking this?", get_partner_names())
-            title = st.text_input("Rendezvous Idea", placeholder="e.g., Dinner at our spot")
+            title = st.text_input("Date Idea", placeholder="e.g., Dinner at our spot")
             date = st.date_input("Date")
             start_time = st.time_input("Time")
-            if st.form_submit_button("Add to Agenda", use_container_width=True):
+            if st.form_submit_button("Add to Calendar", use_container_width=True):
                 if title:
                     final_dt = datetime.datetime.combine(date, start_time)
                     end_dt = final_dt + timedelta(hours=1)
@@ -314,19 +287,19 @@ with calendar_tab:
 # --- LOVE NOTES TAB ---
 with notes_tab:
     with st.form("love_note_form", clear_on_submit=True):
-        st.subheader("Whisper Something Sweet...")
+        st.subheader("Leave a Love Note")
         author = st.selectbox("From", get_partner_names())
         message = st.text_area("Message", placeholder="Thinking of you...")
-        if st.form_submit_button("Send Whisper", use_container_width=True):
+        if st.form_submit_button("Send Note", use_container_width=True):
             if message:
                 add_love_note(author, message)
-                st.toast("Whisper sent!")
+                st.toast("Note sent!")
                 st.rerun()
     
     st.markdown("<hr>", unsafe_allow_html=True)
     all_notes = get_all_love_notes()
     if not all_notes:
-        st.info("No whispers shared yet...")
+        st.info("The first note is yet to be written...")
     else:
         for note in all_notes:
             with st.container(border=True):
