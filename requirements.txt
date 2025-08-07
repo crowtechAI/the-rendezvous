@@ -1,3 +1,4 @@
 streamlit-calendar
+libsql-client
 libsql-client[sqlalchemy]
 sqlalchemy
