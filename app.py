@@ -8,12 +8,21 @@ from bson import ObjectId
 import os
 import certifi
 
-# --- App Configuration (Mobile-Optimized) ---
+# --- App Configuration (Mobile-Optimized with Forced Light Theme) ---
 st.set_page_config(
     page_title="The Rendezvous",
     page_icon="🔥",
-    layout="wide", # Wide layout works best with single-column mobile design
-    initial_sidebar_state="collapsed", # Sidebar is no longer used, but this is good practice
+    layout="wide",
+    initial_sidebar_state="collapsed",
+    # --- NEW: Forcing the Light Theme ---
+    theme={
+        "base": "light",
+        "primaryColor": "#D98880",  # Main accent color
+        "backgroundColor": "#FDF8F5", # Main app background
+        "secondaryBackgroundColor": "#F4ECE6", # Expander and other backgrounds
+        "textColor": "#34495E",
+        "font": "sans serif",
+    }
 )
 
 # --- LOGO CONFIGURATION ---
@@ -109,16 +118,16 @@ def get_all_love_notes():
 def mark_notification_as_read(note_id):
     notes_collection.update_one({"_id": ObjectId(note_id)}, {"$set": {"read": True}})
 
-# --- Styling (Optimized for Mobile) ---
+# --- Styling (works in harmony with the theme object) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Lato:wght@400;700&display=swap');
-    .stApp { background-color: #FDF8F5; color: #34495E; font-family: 'Lato', sans-serif; }
-    .block-container { padding: 1rem 1rem 2rem 1rem; } /* Mobile-friendly padding */
+    /* The theme object now handles the main colors, but we can still override specifics */
+    .block-container { padding: 1rem 1rem 2rem 1rem; }
     h1 { font-family: 'Playfair Display', serif; color: #B05A5A; text-align: center; }
     h2, h3 { font-family: 'Playfair Display', serif; color: #34495E; }
-    .stButton>button { border: 2px solid #D98880; border-radius: 8px; background-color: transparent; color: #D98880; padding: 10px 24px; font-weight: 700; transition: all 0.3s ease-in-out; text-transform: uppercase; letter-spacing: 1px; }
-    .stButton>button:hover { background-color: #D98880; color: #FFFFFF; transform: translateY(-2px); }
+    .stButton>button { border-radius: 8px; font-weight: 700; transition: all 0.3s ease-in-out; text-transform: uppercase; letter-spacing: 1px; }
+    .stButton>button:hover { transform: translateY(-2px); }
     .button-urgent button { background-color: #E74C3C; color: white; border: none; font-weight: bold; }
     .button-urgent button:hover { background-color: #C0392B; }
     .stForm, .fc { background-color: #FFFFFF; border-radius: 10px; padding: 25px; border: 1px solid #EAE0DA; }
@@ -128,17 +137,17 @@ st.markdown("""
 
 # --- HEADER ---
 if os.path.exists(LOGO_IMAGE):
-    st.image(LOGO_IMAGE, width=150) # Control logo width
+    st.image(LOGO_IMAGE, width=150)
 else:
     st.title("The Rendezvous")
 
-# --- NEW: Mobile-First Tab Navigation ---
+# --- Mobile-First Tab Navigation ---
 dashboard_tab, calendar_tab, notes_tab = st.tabs(["🔥 Dashboard", "📅 Calendar", "💌 Love Notes"])
 
 
 # --- DASHBOARD TAB ---
 with dashboard_tab:
-    # --- IN-APP NOTIFICATION SYSTEM ---
+    # IN-APP NOTIFICATION SYSTEM
     unread_notifications = get_unread_notifications()
     if unread_notifications:
         st.subheader("🔔 New Alerts")
@@ -147,11 +156,12 @@ with dashboard_tab:
             button_text = "Read Note" if target_page == "Love Notes" else "View Booking"
             if st.button(f"{notif['message']} → {button_text}", key=f"view_{notif['_id']}", use_container_width=True):
                 mark_notification_as_read(ObjectId(notif['_id']))
-                # Note: Navigation via tabs needs a full rerun, this button marks as read. User will manually tap tab.
+                # User will need to manually click the tab, but this marks the notification as read.
+                st.toast(f"Marked as read. Go to {target_page} to see.")
                 st.rerun()
         st.markdown("---")
 
-    # --- URGENT BOOKING ---
+    # URGENT BOOKING
     st.markdown('<div class="button-urgent">', unsafe_allow_html=True)
     if st.button("Book a Fuck", use_container_width=True):
         st.session_state.show_urgent_booking = not st.session_state.get('show_urgent_booking', False)
@@ -177,7 +187,7 @@ with dashboard_tab:
                     st.rerun()
     st.markdown("---")
 
-    # --- SPLIT RENDEZVOUS DISPLAY ---
+    # SPLIT RENDEZVOUS DISPLAY
     now = datetime.datetime.now()
     all_events = get_events()
     all_upcoming = sorted([e for e in all_events if 'start' in e and datetime.datetime.fromisoformat(e['start']) > now], key=lambda x: datetime.datetime.fromisoformat(x['start']))
@@ -275,13 +285,10 @@ with notes_tab:
                 st.markdown(f"**From: {note['author']}** | <small>{ts.strftime('%b %d, %Y at %I:%M %p')}</small>", unsafe_allow_html=True)
                 st.write(f"> *{note['message']}*")
 
-# --- RELOCATED: App Settings ---
+# --- App Settings ---
 st.markdown("---")
 with st.expander("⚙️ App Settings"):
     partner_names = get_partner_names()
     p1 = st.text_input("Partner 1", value=partner_names[0], key="p1_settings")
     p2 = st.text_input("Partner 2", value=partner_names[1], key="p2_settings")
-    if st.button("Save Partner Names", use_container_width=True):
-        update_partner_names(p1, p2)
-        st.toast("Names updated!")
-        st.rerun()
+    if st.button("Save Partner Names", use_container_width
