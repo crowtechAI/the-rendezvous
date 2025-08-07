@@ -1,125 +1,188 @@
 import streamlit as st
+from streamlit_calendar import calendar
+import datetime
+import json
 from pymongo import MongoClient
 from bson import ObjectId
-import datetime
+import certifi # Added for robust SSL connection
 
 # --- App Configuration ---
 st.set_page_config(
-    page_title="Rendezvous",
-    page_icon="🌹",
+    page_title="The Rendezvous",
+    page_icon="🔥",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# --- Database Connection ---
-# This connects to the MongoDB database defined in your Streamlit Secrets.
+# --- Database Connection & Initialization (MongoDB Version) ---
 try:
-    client = MongoClient(st.secrets["mongo_uri"])
+    # Connect to MongoDB using the connection string from secrets
+    # tlsCAFile=certifi.where() is a best practice for preventing SSL errors
+    client = MongoClient(st.secrets["mongo_uri"], tlsCAFile=certifi.where())
     db = client.get_database("rendezvous")
     events_collection = db["events"]
+    app_state_collection = db["app_state"]
 except Exception as e:
     st.error(f"Failed to connect to MongoDB. Please check your secrets.toml configuration. Error: {e}")
     st.stop()
 
-# --- Data Helper Functions ---
-def get_events():
-    """Fetches all events sorted by date."""
-    return list(events_collection.find().sort("date", 1))
+def setup_database():
+    """Ensures collections and default state exist in MongoDB."""
+    # MongoDB creates collections automatically, but we ensure default partner names are set.
+    if app_state_collection.count_documents({"key": "partner_names"}) == 0:
+        app_state_collection.insert_one({
+            "key": "partner_names",
+            "value": ["Partner 1", "Partner 2"]
+        })
+    # Create an index for faster date-based lookups, which is good practice.
+    events_collection.create_index([("start", 1)])
 
-def add_event(title, date, partner):
-    """Adds a new event to the collection."""
-    if not title:
-        st.warning("Please enter an event title.")
-        return
-    events_collection.insert_one({
+# Run the setup once at the start
+setup_database()
+
+# --- Data Helper Functions (MongoDB Version) ---
+def get_partner_names():
+    doc = app_state_collection.find_one({"key": "partner_names"})
+    return doc['value'] if doc else ["Partner 1", "Partner 2"]
+
+def update_partner_names(p1, p2):
+    app_state_collection.update_one(
+        {"key": "partner_names"},
+        {"$set": {"value": [p1, p2]}},
+        upsert=True  # Creates the document if it doesn't exist
+    )
+
+def add_event(title, start_time, booker, is_urgent):
+    color = "#E74C3C" if is_urgent else "#D98880"
+    event_doc = {
         "title": title,
-        "date": date,
-        "partner": partner,
-        "attended": False
-    })
-    st.success("Event added!")
+        "start": start_time.isoformat(), # Use the key 'start' for calendar compatibility
+        "backgroundColor": color,
+        "borderColor": color,
+        "booker": booker,
+        "is_urgent": is_urgent
+    }
+    events_collection.insert_one(event_doc)
 
-def delete_event(event_id):
-    """Deletes an event by its ID."""
-    events_collection.delete_one({"_id": ObjectId(event_id)})
-    st.toast("Event removed.")
-
-def mark_attended(event_id, attended):
-    """Updates the attended status of an event."""
-    events_collection.update_one({"_id": ObjectId(event_id)}, {"$set": {"attended": attended}})
-    st.toast("Status updated!")
-
-def get_stats():
-    """Calculates the number of attended events per partner."""
-    pipeline = [
-        {"$match": {"attended": True}},
-        {"$group": {"_id": "$partner", "count": {"$sum": 1}}}
-    ]
-    return {doc["_id"]: doc["count"] for doc in events_collection.aggregate(pipeline)}
+def get_events():
+    # MongoDB returns documents that are already dict-like
+    return list(events_collection.find())
 
 
-# --- Main App UI ---
-st.title("🌹 The Rendezvous")
-st.markdown("*Our simple, shared event scheduler*")
+# --- Styling ---
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Lato:wght@400;700&display=swap');
+    .stApp { background-color: #FDF8F5; color: #34495E; font-family: 'Lato', sans-serif; }
+    .block-container { max-width: 1200px; padding-top: 2rem; padding-bottom: 2rem; margin: auto; }
+    h1 { font-family: 'Playfair Display', serif; color: #B05A5A; text-align: center; }
+    h2, h3 { font-family: 'Playfair Display', serif; color: #34495E; }
+    .stButton>button { border: 2px solid #D98880; border-radius: 8px; background-color: transparent; color: #D98880; padding: 10px 24px; font-weight: 700; transition: all 0.3s ease-in-out; text-transform: uppercase; letter-spacing: 1px; }
+    .stButton>button:hover { background-color: #D98880; color: #FFFFFF; transform: translateY(-2px); }
+    .button-urgent button { background-color: #E74C3C; color: white; border: none; font-weight: bold; }
+    .button-urgent button:hover { background-color: #C0392B; }
+    .stSidebar { background-color: #F4ECE6; }
+    .stForm, .fc { background-color: #FFFFFF; border-radius: 10px; padding: 25px; border: 1px solid #EAE0DA; }
+</style>
+""", unsafe_allow_html=True)
 
-# Create two tabs for scheduling and stats
-tab1, tab2 = st.tabs(["📅 Schedule Events", "📈 Our Stats"])
 
-with tab1:
-    # --- Form for adding new events ---
-    with st.form("event_form", clear_on_submit=True):
-        st.subheader("Plan a New Rendezvous")
-        title = st.text_input("Event Title", placeholder="e.g., Dinner at the new Italian place")
-        col1, col2 = st.columns(2)
-        with col1:
-            date = st.date_input("Date", min_value=datetime.date.today())
-        with col2:
-            partner = st.radio("Who planned this?", ["Me", "My Partner"], horizontal=True)
-        
-        submitted = st.form_submit_button("➕ Add Rendezvous", use_container_width=True)
-        if submitted:
-            # Convert date to datetime for MongoDB compatibility
-            event_datetime = datetime.datetime.combine(date, datetime.datetime.min.time())
-            add_event(title, event_datetime, partner)
-            # No need for rerun(), form submission handles it.
+# --- Page Navigation ---
+if 'page' not in st.session_state: st.session_state.page = "Dashboard"
+def navigate_to(page_name): st.session_state.page = page_name
+
+# --- Sidebar ---
+with st.sidebar:
+    st.title("The Rendezvous")
+    st.markdown("---")
+    partner_names = get_partner_names() # Fetch names for the sidebar
+    if st.button("Dashboard", use_container_width=True, type="secondary" if st.session_state.page != "Dashboard" else "primary"): navigate_to("Dashboard")
+    if st.button("Calendar", use_container_width=True, type="secondary" if st.session_state.page != "Calendar" else "primary"): navigate_to("Calendar")
+    st.markdown("---")
+    with st.expander("Partner Names"):
+        p1 = st.text_input("Partner 1", value=partner_names[0])
+        p2 = st.text_input("Partner 2", value=partner_names[1])
+        if st.button("Save Names", use_container_width=True):
+            update_partner_names(p1, p2)
+            st.toast("Names updated!")
+            st.rerun()
+
+# --- Main App Logic ---
+
+if st.session_state.page == "Dashboard":
+    st.title("Our Dashboard")
+    st.markdown("---")
+
+    # URGENT BOOKING
+    st.markdown('<div class="button-urgent">', unsafe_allow_html=True)
+    if st.button("Book a Fuck", use_container_width=True):
+        st.session_state.show_urgent_booking = not st.session_state.get('show_urgent_booking', False)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if st.session_state.get('show_urgent_booking', False):
+        with st.form("urgent_form"):
+            st.subheader("Quick & Urgent Booking")
+            booker = st.selectbox("Who's booking this?", get_partner_names())
+            col1, col2 = st.columns(2)
+            date = col1.date_input("Date", value=datetime.date.today())
+            time = col2.time_input("Time", value=datetime.time(21, 0))
+            if st.form_submit_button("Confirm Booking 🔥", use_container_width=True):
+                final_dt = datetime.datetime.combine(date, time)
+                add_event(title="Urgent Rendezvous 🔥", start_time=final_dt, booker=booker, is_urgent=True)
+                st.success(f"It's a date! 🔥")
+                st.session_state.show_urgent_booking = False
+                st.rerun()
 
     st.markdown("---")
-    st.subheader("Our Upcoming Events")
-    
-    # --- Display list of events ---
+
+    # SPLIT RENDEZVOUS DISPLAY
+    now = datetime.datetime.now()
     all_events = get_events()
-    if not all_events:
-        st.info("No events scheduled yet. Time to plan something fun!")
+    # Convert 'start' string from DB to datetime object for comparison
+    all_upcoming = sorted([e for e in all_events if datetime.datetime.fromisoformat(e['start']) > now], key=lambda x: x['start'])
     
-    for event in all_events:
-        event_id_str = str(event['_id'])
-        
-        # Ensure date is datetime object
-        event_date = event['date'] if isinstance(event['date'], datetime.datetime) else datetime.datetime.fromisoformat(event['date'])
+    urgent_events = [e for e in all_upcoming if e.get("is_urgent")]
+    planned_events = [e for e in all_upcoming if not e.get("is_urgent")]
 
-        with st.container(border=True):
-            col1, col2, col3 = st.columns([4, 2, 1])
-            with col1:
-                st.markdown(f"**{event['title']}**")
-                st.caption(f"On {event_date.strftime('%A, %b %d, %Y')} — Planned by: {event['partner']}")
-            with col2:
-                # --- CORRECTED: Using on_change for efficient updates ---
-                attended = st.checkbox(
-                    "Attended", 
-                    value=event.get("attended", False), 
-                    key=f"attended_{event_id_str}",
-                    on_change=mark_attended,
-                    args=(event['_id'], not event.get("attended", False))
-                )
-            with col3:
-                # Use a unique key for the delete button
-                if st.button("🗑️", key=f"delete_{event_id_str}", use_container_width=True):
-                    delete_event(event['_id'])
-                    st.rerun()
+    st.subheader("🍆 Fucks Booked")
+    if not urgent_events:
+        st.info("No urgent bookings. Maybe it's time to make one?")
+    else:
+        for event in urgent_events:
+            with st.container(border=True):
+                event_date = datetime.datetime.fromisoformat(event['start'])
+                booker_name = event.get('booker', 'Someone')
+                st.markdown(f"**{booker_name}** Booked a fuck on _{event_date.strftime('%A, %b %d at %I:%M %p')}_")
 
-with tab2:
-    st.subheader("Rendezvous Scoreboard")
-    stats = get_stats()
-    col1, col2 = st.columns(2)
-    col1.metric("❤️ My Events Attended", stats.get("Me", 0))
-    col2.metric("💖 Partner's Events Attended", stats.get("My Partner", 0))
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    st.subheader("📅 Planned Dates")
+    if not planned_events:
+        st.info("No planned dates on the calendar.")
+    else:
+        for event in planned_events:
+            with st.container(border=True):
+                event_date = datetime.datetime.fromisoformat(event['start'])
+                st.markdown(f"**{event['title']}** on _{event_date.strftime('%A, %b %d at %I:%M %p')}_")
+                st.markdown(f"<small>Booked by: {event.get('booker', 'Unknown')}</small>", unsafe_allow_html=True)
+
+
+elif st.session_state.page == "Calendar":
+    st.title("Our Calendar")
+    with st.form("new_rendezvous", clear_on_submit=True):
+        st.subheader("Plan a New Date")
+        booker = st.selectbox("Who's booking this?", get_partner_names())
+        col1, col2 = st.columns(2)
+        title = col1.text_input("Date Idea", placeholder="e.g., Dinner at our spot")
+        date = col1.date_input("Date")
+        start_time = col2.time_input("Time")
+        if st.form_submit_button("Add to Calendar", use_container_width=True):
+            if title:
+                final_dt = datetime.datetime.combine(date, start_time)
+                add_event(title=title, start_time=final_dt, booker=booker, is_urgent=False)
+                st.toast(f"'{title}' added!")
+                st.rerun()
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    calendar_events = get_events()
+    calendar(events=calendar_events)
