@@ -23,7 +23,7 @@ try:
     client = MongoClient(st.secrets["mongo_uri"], tlsCAFile=certifi.where())
     db = client.get_database("rendezvous")
     events_collection = db["events"]
-    blockouts_collection = db["blockouts"] # New collection for block-outs
+    blockouts_collection = db["blockouts"]
     notes_collection = db["love_notes"]
     app_state_collection = db["app_state"]
 except Exception as e:
@@ -32,7 +32,6 @@ except Exception as e:
 
 # --- One-Time Database Setup ---
 def setup_database():
-    """Ensures collections and default state exist."""
     if app_state_collection.count_documents({"key": "partner_names"}) == 0:
         app_state_collection.insert_one({"key": "partner_names", "value": ["Partner 1", "Partner 2"]})
     notes_collection.create_index([("timestamp", -1)])
@@ -58,14 +57,22 @@ def add_blockout(title, start_time, end_time, all_day):
     blockouts_collection.insert_one({
         "title": title, "start": start_time.isoformat(), "end": end_time.isoformat(),
         "allDay": all_day, "backgroundColor": "#808B96", "borderColor": "#5D6D7E",
-        "display": "background" # This makes it look like a block
+        "display": "background"
     })
 
 def get_events():
-    return list(events_collection.find())
+    """Fetches events and makes them JSON-safe."""
+    events = list(events_collection.find())
+    for event in events:
+        event['_id'] = str(event['_id']) # FIX: Convert ObjectId to string
+    return events
 
 def get_blockouts():
-    return list(blockouts_collection.find())
+    """Fetches blockouts and makes them JSON-safe."""
+    blockouts = list(blockouts_collection.find())
+    for blockout in blockouts:
+        blockout['_id'] = str(blockout['_id']) # FIX: Convert ObjectId to string
+    return blockouts
 
 def add_love_note(author, message):
     notes_collection.insert_one({
@@ -80,10 +87,16 @@ def add_booking_notification(message):
     })
 
 def get_unread_notifications():
-    return list(notes_collection.find({"read": False}).sort("timestamp", -1))
+    notifications = list(notes_collection.find({"read": False}).sort("timestamp", -1))
+    for notif in notifications:
+        notif['_id'] = str(notif['_id']) # FIX: Convert ObjectId to string
+    return notifications
 
 def get_all_love_notes():
-    return list(notes_collection.find({"type": "note"}).sort("timestamp", -1))
+    notes = list(notes_collection.find({"type": "note"}).sort("timestamp", -1))
+    for note in notes:
+        note['_id'] = str(note['_id']) # FIX: Convert ObjectId to string
+    return notes
 
 def mark_notification_as_read(note_id):
     notes_collection.update_one({"_id": ObjectId(note_id)}, {"$set": {"read": True}})
@@ -149,7 +162,7 @@ if st.session_state.page == "Dashboard":
                 target_page = "Love Notes" if notif.get("type") == "note" else "Calendar"
                 button_text = "Read Note" if target_page == "Love Notes" else "View Calendar"
                 if st.button(button_text, key=f"view_{notif['_id']}", use_container_width=True):
-                    mark_notification_as_read(notif['_id'])
+                    mark_notification_as_read(ObjectId(notif['_id']))
                     navigate_to(target_page)
                     st.rerun()
         st.markdown("---")
@@ -226,7 +239,6 @@ elif st.session_state.page == "Calendar":
                     st.toast(f"'{title}' added! Your partner will be alerted.")
                     st.rerun()
     
-    # --- NEW: Block-Out Time Feature ---
     with st.expander("Block Out Time"):
         with st.form("blockout_form", clear_on_submit=True):
             title = st.text_input("Reason", placeholder="e.g., Work, Period, Family visit")
@@ -253,7 +265,6 @@ elif st.session_state.page == "Calendar":
 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Combine events and blockouts for the calendar view
     all_calendar_items = get_events() + get_blockouts()
     calendar(events=all_calendar_items)
 
@@ -276,6 +287,7 @@ elif st.session_state.page == "Love Notes":
         st.subheader("Our Message Board")
         for note in all_notes:
             with st.container(border=True):
-                ts = note['timestamp']
+                # Ensure timestamp is a datetime object before formatting
+                ts = note['timestamp'] if isinstance(note['timestamp'], datetime.datetime) else datetime.datetime.fromisoformat(note['timestamp'])
                 st.markdown(f"**From: {note['author']}** | <small>{ts.strftime('%b %d, %Y at %I:%M %p')}</small>", unsafe_allow_html=True)
                 st.write(f"> *{note['message']}*")
