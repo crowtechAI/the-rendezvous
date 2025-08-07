@@ -1,2 +1,2 @@
-turso-client
 streamlit-calendar
+libsql-client[sqlalchemy]
