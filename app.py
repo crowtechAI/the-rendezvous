@@ -291,4 +291,7 @@ with st.expander("⚙️ App Settings"):
     partner_names = get_partner_names()
     p1 = st.text_input("Partner 1", value=partner_names[0], key="p1_settings")
     p2 = st.text_input("Partner 2", value=partner_names[1], key="p2_settings")
-    if st.button("Save Partner Names", use_container_width
+    if st.button("Save Partner Names", use_container_width=True):
+        update_partner_names(p1, p2)
+        st.toast("Names updated!")
+        st.rerun()
