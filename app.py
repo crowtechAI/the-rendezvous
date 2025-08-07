@@ -4,7 +4,11 @@ import datetime
 import json
 from pymongo import MongoClient
 from bson import ObjectId
+import os
 import certifi # Added for robust SSL connection
+
+# --- LOGO CONFIGURATION ---
+LOGO_IMAGE = "logo.png"
 
 # --- App Configuration ---
 st.set_page_config(
@@ -14,59 +18,64 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- Database Connection & Initialization (MongoDB Version) ---
+# --- Database Connection (MongoDB) ---
 try:
-    # Connect to MongoDB using the connection string from secrets
-    # tlsCAFile=certifi.where() is a best practice for preventing SSL errors
+    # Use certifi to provide SSL certificates, preventing common connection errors
     client = MongoClient(st.secrets["mongo_uri"], tlsCAFile=certifi.where())
-    db = client.get_database("rendezvous")
+    db = client.get_database("rendezvous") # Your database name
     events_collection = db["events"]
+    notes_collection = db["love_notes"]
     app_state_collection = db["app_state"]
 except Exception as e:
-    st.error(f"Failed to connect to MongoDB. Please check your secrets.toml configuration. Error: {e}")
+    st.error(f"Failed to connect to MongoDB. Check your secrets and IP Access List. Error: {e}")
     st.stop()
 
+# --- One-Time Database Setup ---
 def setup_database():
-    """Ensures collections and default state exist in MongoDB."""
-    # MongoDB creates collections automatically, but we ensure default partner names are set.
+    """Ensures collections and default state exist."""
     if app_state_collection.count_documents({"key": "partner_names"}) == 0:
-        app_state_collection.insert_one({
-            "key": "partner_names",
-            "value": ["Partner 1", "Partner 2"]
-        })
-    # Create an index for faster date-based lookups, which is good practice.
-    events_collection.create_index([("start", 1)])
+        app_state_collection.insert_one({"key": "partner_names", "value": ["Partner 1", "Partner 2"]})
 
-# Run the setup once at the start
 setup_database()
 
-# --- Data Helper Functions (MongoDB Version) ---
+# --- Data Helper Functions (interact with MongoDB) ---
 def get_partner_names():
     doc = app_state_collection.find_one({"key": "partner_names"})
     return doc['value'] if doc else ["Partner 1", "Partner 2"]
 
 def update_partner_names(p1, p2):
-    app_state_collection.update_one(
-        {"key": "partner_names"},
-        {"$set": {"value": [p1, p2]}},
-        upsert=True  # Creates the document if it doesn't exist
-    )
+    app_state_collection.update_one({"key": "partner_names"}, {"$set": {"value": [p1, p2]}}, upsert=True)
 
 def add_event(title, start_time, booker, is_urgent):
     color = "#E74C3C" if is_urgent else "#D98880"
-    event_doc = {
-        "title": title,
-        "start": start_time.isoformat(), # Use the key 'start' for calendar compatibility
-        "backgroundColor": color,
-        "borderColor": color,
-        "booker": booker,
-        "is_urgent": is_urgent
-    }
-    events_collection.insert_one(event_doc)
+    events_collection.insert_one({
+        "title": title, "start": start_time.isoformat(), "backgroundColor": color,
+        "borderColor": color, "booker": booker, "is_urgent": is_urgent
+    })
 
 def get_events():
-    # MongoDB returns documents that are already dict-like
     return list(events_collection.find())
+
+def add_love_note(author, message):
+    notes_collection.insert_one({
+        "author": author, "message": message, "timestamp": datetime.datetime.now(),
+        "read": False, "type": "note"
+    })
+
+def add_booking_notification(message):
+    notes_collection.insert_one({
+        "message": message, "timestamp": datetime.datetime.now(),
+        "read": False, "type": "booking"
+    })
+
+def get_unread_notifications():
+    return list(notes_collection.find({"read": False}).sort("timestamp", -1))
+
+def get_all_love_notes():
+    return list(notes_collection.find({"type": "note"}).sort("timestamp", -1))
+
+def mark_notification_as_read(note_id):
+    notes_collection.update_one({"_id": ObjectId(note_id)}, {"$set": {"read": True}})
 
 
 # --- Styling ---
@@ -75,7 +84,7 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Lato:wght@400;700&display=swap');
     .stApp { background-color: #FDF8F5; color: #34495E; font-family: 'Lato', sans-serif; }
     .block-container { max-width: 1200px; padding-top: 2rem; padding-bottom: 2rem; margin: auto; }
-    h1 { font-family: 'Playfair Display', serif; color: #B05A5A; text-align: center; }
+    h1, .sidebar-title { font-family: 'Playfair Display', serif; color: #B05A5A; text-align: center; }
     h2, h3 { font-family: 'Playfair Display', serif; color: #34495E; }
     .stButton>button { border: 2px solid #D98880; border-radius: 8px; background-color: transparent; color: #D98880; padding: 10px 24px; font-weight: 700; transition: all 0.3s ease-in-out; text-transform: uppercase; letter-spacing: 1px; }
     .stButton>button:hover { background-color: #D98880; color: #FFFFFF; transform: translateY(-2px); }
@@ -93,13 +102,19 @@ def navigate_to(page_name): st.session_state.page = page_name
 
 # --- Sidebar ---
 with st.sidebar:
-    st.title("The Rendezvous")
+    if os.path.exists(LOGO_IMAGE):
+        st.image(LOGO_IMAGE, use_column_width=True)
+    else:
+        st.markdown('<h1 class="sidebar-title">The Rendezvous</h1>', unsafe_allow_html=True)
+    
     st.markdown("---")
-    partner_names = get_partner_names() # Fetch names for the sidebar
     if st.button("Dashboard", use_container_width=True, type="secondary" if st.session_state.page != "Dashboard" else "primary"): navigate_to("Dashboard")
     if st.button("Calendar", use_container_width=True, type="secondary" if st.session_state.page != "Calendar" else "primary"): navigate_to("Calendar")
+    if st.button("Love Notes", use_container_width=True, type="secondary" if st.session_state.page != "Love Notes" else "primary"): navigate_to("Love Notes")
+
     st.markdown("---")
     with st.expander("Partner Names"):
+        partner_names = get_partner_names()
         p1 = st.text_input("Partner 1", value=partner_names[0])
         p2 = st.text_input("Partner 2", value=partner_names[1])
         if st.button("Save Names", use_container_width=True):
@@ -111,7 +126,23 @@ with st.sidebar:
 
 if st.session_state.page == "Dashboard":
     st.title("Our Dashboard")
-    st.markdown("---")
+
+    # --- IN-APP NOTIFICATION SYSTEM ---
+    unread_notifications = get_unread_notifications()
+    if unread_notifications:
+        st.subheader("🔔 New Alerts")
+        for notif in unread_notifications:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.success(f"{notif['message']}")
+            with col2:
+                target_page = "Love Notes" if notif.get("type") == "note" else "Calendar"
+                button_text = "Read Note" if target_page == "Love Notes" else "View Calendar"
+                if st.button(button_text, key=f"view_{notif['_id']}", use_container_width=True):
+                    mark_notification_as_read(notif['_id'])
+                    navigate_to(target_page)
+                    st.rerun()
+        st.markdown("---")
 
     # URGENT BOOKING
     st.markdown('<div class="button-urgent">', unsafe_allow_html=True)
@@ -128,8 +159,9 @@ if st.session_state.page == "Dashboard":
             time = col2.time_input("Time", value=datetime.time(21, 0))
             if st.form_submit_button("Confirm Booking 🔥", use_container_width=True):
                 final_dt = datetime.datetime.combine(date, time)
-                add_event(title="Urgent Rendezvous 🔥", start_time=final_dt, booker=booker, is_urgent=True)
-                st.success(f"It's a date! 🔥")
+                add_event("Urgent Rendezvous 🔥", final_dt, booker, is_urgent=True)
+                add_booking_notification(f"{booker} booked an Urgent Rendezvous!")
+                st.success("It's a date! Your partner will be alerted. 🔥")
                 st.session_state.show_urgent_booking = False
                 st.rerun()
 
@@ -138,8 +170,7 @@ if st.session_state.page == "Dashboard":
     # SPLIT RENDEZVOUS DISPLAY
     now = datetime.datetime.now()
     all_events = get_events()
-    # Convert 'start' string from DB to datetime object for comparison
-    all_upcoming = sorted([e for e in all_events if datetime.datetime.fromisoformat(e['start']) > now], key=lambda x: x['start'])
+    all_upcoming = sorted([e for e in all_events if datetime.datetime.fromisoformat(e['start']) > now], key=lambda x: datetime.datetime.fromisoformat(x['start']))
     
     urgent_events = [e for e in all_upcoming if e.get("is_urgent")]
     planned_events = [e for e in all_upcoming if not e.get("is_urgent")]
@@ -166,7 +197,6 @@ if st.session_state.page == "Dashboard":
                 st.markdown(f"**{event['title']}** on _{event_date.strftime('%A, %b %d at %I:%M %p')}_")
                 st.markdown(f"<small>Booked by: {event.get('booker', 'Unknown')}</small>", unsafe_allow_html=True)
 
-
 elif st.session_state.page == "Calendar":
     st.title("Our Calendar")
     with st.form("new_rendezvous", clear_on_submit=True):
@@ -179,10 +209,33 @@ elif st.session_state.page == "Calendar":
         if st.form_submit_button("Add to Calendar", use_container_width=True):
             if title:
                 final_dt = datetime.datetime.combine(date, start_time)
-                add_event(title=title, start_time=final_dt, booker=booker, is_urgent=False)
-                st.toast(f"'{title}' added!")
+                add_event(title, final_dt, booker, is_urgent=False)
+                add_booking_notification(f"{booker} planned '{title}'!")
+                st.toast(f"'{title}' added! Your partner will be alerted.")
                 st.rerun()
     
     st.markdown("<br>", unsafe_allow_html=True)
-    calendar_events = get_events()
-    calendar(events=calendar_events)
+    calendar(events=get_events())
+
+elif st.session_state.page == "Love Notes":
+    st.title("Our Love Notes")
+    with st.form("love_note_form", clear_on_submit=True):
+        author = st.selectbox("From", get_partner_names())
+        message = st.text_area("Message", placeholder="Thinking of you...")
+        if st.form_submit_button("Send Note", use_container_width=True):
+            if message:
+                add_love_note(author, message)
+                st.toast("Note sent! Your partner will be alerted.")
+                st.rerun()
+    
+    st.markdown("<br><hr><br>", unsafe_allow_html=True)
+    all_notes = get_all_love_notes()
+    if not all_notes:
+        st.info("The first note is yet to be written...")
+    else:
+        st.subheader("Our Message Board")
+        for note in all_notes:
+            with st.container(border=True):
+                ts = note['timestamp']
+                st.markdown(f"**From: {note['author']}** | <small>{ts.strftime('%b %d, %Y at %I:%M %p')}</small>", unsafe_allow_html=True)
+                st.write(f"> *{note['message']}*")
