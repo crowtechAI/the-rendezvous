@@ -1,6 +1,7 @@
 import streamlit as st
 from streamlit_calendar import calendar
 import datetime
+from datetime import timedelta # Import timedelta for duration calculation
 import json
 from pymongo import MongoClient
 from bson import ObjectId
@@ -61,18 +62,28 @@ def add_blockout(title, start_time, end_time, all_day):
     })
 
 def get_events():
-    """Fetches events and makes them JSON-safe."""
     events = list(events_collection.find())
     for event in events:
-        event['_id'] = str(event['_id']) # FIX: Convert ObjectId to string
+        event['_id'] = str(event['_id'])
     return events
 
 def get_blockouts():
-    """Fetches blockouts and makes them JSON-safe."""
     blockouts = list(blockouts_collection.find())
     for blockout in blockouts:
-        blockout['_id'] = str(blockout['_id']) # FIX: Convert ObjectId to string
+        blockout['_id'] = str(blockout['_id'])
     return blockouts
+
+def check_for_overlap(new_start, new_end):
+    """Checks if a new event overlaps with any existing block-out periods."""
+    all_blockouts = get_blockouts()
+    for blockout in all_blockouts:
+        block_start = datetime.datetime.fromisoformat(blockout['start'])
+        block_end = datetime.datetime.fromisoformat(blockout['end'])
+        # The logic for overlap: (StartA < EndB) and (EndA > StartB)
+        if new_start < block_end and new_end > block_start:
+            return blockout # Return the conflicting blockout
+    return None # No conflict found
+
 
 def add_love_note(author, message):
     notes_collection.insert_one({
@@ -89,13 +100,13 @@ def add_booking_notification(message):
 def get_unread_notifications():
     notifications = list(notes_collection.find({"read": False}).sort("timestamp", -1))
     for notif in notifications:
-        notif['_id'] = str(notif['_id']) # FIX: Convert ObjectId to string
+        notif['_id'] = str(notif['_id'])
     return notifications
 
 def get_all_love_notes():
     notes = list(notes_collection.find({"type": "note"}).sort("timestamp", -1))
     for note in notes:
-        note['_id'] = str(note['_id']) # FIX: Convert ObjectId to string
+        note['_id'] = str(note['_id'])
     return notes
 
 def mark_notification_as_read(note_id):
@@ -179,13 +190,22 @@ if st.session_state.page == "Dashboard":
             col1, col2 = st.columns(2)
             date = col1.date_input("Date", value=datetime.date.today())
             time = col2.time_input("Time", value=datetime.time(21, 0))
+            
             if st.form_submit_button("Confirm Booking 🔥", use_container_width=True):
                 final_dt = datetime.datetime.combine(date, time)
-                add_event("Urgent Rendezvous 🔥", final_dt, booker, is_urgent=True)
-                add_booking_notification(f"{booker} booked an Urgent Rendezvous!")
-                st.success("It's a date! Your partner will be alerted. 🔥")
-                st.session_state.show_urgent_booking = False
-                st.rerun()
+                # Assume a 1-hour duration for conflict checking
+                end_dt = final_dt + timedelta(hours=1)
+                
+                # --- NEW: Conflict Check ---
+                conflicting_block = check_for_overlap(final_dt, end_dt)
+                if conflicting_block:
+                    st.error(f"Cannot book! This time conflicts with a block-out period: '{conflicting_block['title']}'")
+                else:
+                    add_event("Urgent Rendezvous 🔥", final_dt, booker, is_urgent=True)
+                    add_booking_notification(f"{booker} booked an Urgent Rendezvous!")
+                    st.success("It's a date! Your partner will be alerted. 🔥")
+                    st.session_state.show_urgent_booking = False
+                    st.rerun()
 
     st.markdown("---")
 
@@ -231,13 +251,22 @@ elif st.session_state.page == "Calendar":
             title = col1.text_input("Date Idea", placeholder="e.g., Dinner at our spot")
             date = col1.date_input("Date")
             start_time = col2.time_input("Time")
+            
             if st.form_submit_button("Add to Calendar", use_container_width=True):
                 if title:
                     final_dt = datetime.datetime.combine(date, start_time)
-                    add_event(title, final_dt, booker, is_urgent=False)
-                    add_booking_notification(f"{booker} planned '{title}'!")
-                    st.toast(f"'{title}' added! Your partner will be alerted.")
-                    st.rerun()
+                    # Assume a 1-hour duration for conflict checking
+                    end_dt = final_dt + timedelta(hours=1)
+                    
+                    # --- NEW: Conflict Check ---
+                    conflicting_block = check_for_overlap(final_dt, end_dt)
+                    if conflicting_block:
+                        st.error(f"Cannot book! This time conflicts with a block-out period: '{conflicting_block['title']}'")
+                    else:
+                        add_event(title, final_dt, booker, is_urgent=False)
+                        add_booking_notification(f"{booker} planned '{title}'!")
+                        st.toast(f"'{title}' added! Your partner will be alerted.")
+                        st.rerun()
     
     with st.expander("Block Out Time"):
         with st.form("blockout_form", clear_on_submit=True):
@@ -287,7 +316,6 @@ elif st.session_state.page == "Love Notes":
         st.subheader("Our Message Board")
         for note in all_notes:
             with st.container(border=True):
-                # Ensure timestamp is a datetime object before formatting
                 ts = note['timestamp'] if isinstance(note['timestamp'], datetime.datetime) else datetime.datetime.fromisoformat(note['timestamp'])
                 st.markdown(f"**From: {note['author']}** | <small>{ts.strftime('%b %d, %Y at %I:%M %p')}</small>", unsafe_allow_html=True)
                 st.write(f"> *{note['message']}*")
