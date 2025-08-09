@@ -1,81 +1,184 @@
 import streamlit as st
 from streamlit_calendar import calendar
 import datetime
-from datetime import timedelta
-import json
+from datetime import timedelta, time
 from pymongo import MongoClient
 from bson import ObjectId
 import os
 import certifi
+import pandas as pd
+import altair as alt
 
-# --- App Configuration (Mobile-Optimized) ---
+# --- App Configuration ---
 st.set_page_config(
-    page_title="The Rendezvous",
-    page_icon="🔥",
+    page_title="Our Connection Calendar",
+    page_icon="💞",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
-# --- LOGO CONFIGURATION ---
+# ==============================================================================
+# 1. CONFIGURATION & STYLING
+# ==============================================================================
+
 LOGO_IMAGE = "logo.png"
 
-# --- Database Connection ---
-try:
-    client = MongoClient(st.secrets["mongo_uri"], tlsCAFile=certifi.where())
-    db = client.get_database("rendezvous")
-    events_collection = db["events"]
-    blockouts_collection = db["blockouts"]
-    notes_collection = db["love_notes"]
-    app_state_collection = db["app_state"]
-except Exception as e:
-    st.error(f"Failed to connect to MongoDB. Check your secrets and IP Access List. Error: {e}")
-    st.stop()
+def get_css_variables():
+    """Returns a dictionary of CSS variables based on the current Streamlit theme."""
+    try:
+        theme_base = st.get_option("theme.base")
+    except:
+        theme_base = "light"
 
-# --- One-Time Database Setup ---
+    if theme_base == "dark":
+        return {
+            "--primary-color": "#BE9EC9", "--accent-color": "#87CEEB", "--danger": "#FF6B6B",
+            "--background": "linear-gradient(135deg, #222222 0%, #333333 100%)",
+            "--card-bg": "rgba(30, 30, 30, 0.9)", "--text-primary": "#f0f0f0",
+            "--text-secondary": "#cccccc", "--button-bg": "#444444", "--button-hover": "#5A5A5A",
+            "--partner1-color": "#FFB6C1", "--partner2-color": "#87CEFA",
+        }
+    else:  # light theme
+        return {
+            "--primary-color": "#BE9EC9", "--accent-color": "#87CEEB", "--danger": "#FF6B6B",
+            "--background": "linear-gradient(135deg, #FDFBFB 0%, #EBEDEE 100%)",
+            "--card-bg": "rgba(255, 255, 255, 0.9)", "--text-primary": "#333333",
+            "--text-secondary": "#555555", "--button-bg": "#E8B4CB", "--button-hover": "#D498B5",
+            "--partner1-color": "#FFB6C1", "--partner2-color": "#87CEFA",
+        }
+
+CALENDAR_OPTIONS = {
+    "editable": "true", "navLinks": "true", "selectable": "true", "initialView": "dayGridMonth",
+    "headerToolbar": {
+        "left": "prev,next today", "center": "title", "right": "dayGridMonth,timeGridWeek,timeGridDay"
+    }
+}
+
+def apply_global_styles():
+    """Applies custom CSS to the entire Streamlit app."""
+    css_vars = get_css_variables()
+    css = f"""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600&family=Playfair+Display:wght@400;700&display=swap');
+        :root {{
+            --primary-color: {css_vars['--primary-color']}; --accent-color: {css_vars['--accent-color']};
+            --danger: {css_vars['--danger']}; --background: {css_vars['--background']};
+            --card-bg: {css_vars['--card-bg']}; --text-primary: {css_vars['--text-primary']};
+            --text-secondary: {css_vars['--text-secondary']}; --button-bg: {css_vars['--button-bg']};
+            --button-hover: {css_vars['--button-hover']}; --partner1-color: {css_vars['--partner1-color']};
+            --partner2-color: {css_vars['--partner2-color']};
+        }}
+        .stApp {{
+            background: var(--background); color: var(--text-primary); font-family: 'Montserrat', sans-serif;
+        }}
+        h1, h2, h3 {{
+            font-family: 'Playfair Display', serif; color: var(--text-primary); font-weight: 700;
+        }}
+        .stButton>button {{
+            background-color: var(--button-bg); border: 1px solid var(--button-bg);
+            border-radius: 25px; font-weight: 600; transition: all 0.3s ease; color: var(--text-primary);
+        }}
+        .stButton>button:hover {{
+            background-color: var(--button-hover); border-color: var(--button-hover); transform: scale(1.02);
+        }}
+        .stButton>button:active {{ transform: scale(0.98); }}
+        .emergency-button button {{
+            background: var(--danger); border-color: #FF4D4D; color: white;
+            animation: pulse-red 1.5s infinite; font-weight: bold;
+        }}
+        @keyframes pulse-red {{
+            0% {{ box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7); }}
+            70% {{ box-shadow: 0 0 0 12px rgba(255, 107, 107, 0); }}
+            100% {{ box-shadow: 0 0 0 0 rgba(255, 107, 107, 0); }}
+        }}
+        .stForm, .stContainer, [data-testid="stDialog"], .card {{
+            background: var(--card-bg); border-radius: 20px; padding: 2rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); margin-bottom: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.1); color: var(--text-primary);
+        }}
+        .partner-badge {{
+            display: inline-block; padding: 0.15em 0.6em; border-radius: 12px; font-weight: 600;
+            font-size: 0.85em; color: var(--card-bg); user-select: none; margin-right: 0.5em;
+        }}
+        .partner1 {{ background-color: var(--partner1-color); }}
+        .partner2 {{ background-color: var(--partner2-color); }}
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+
+apply_global_styles()
+
+# ==============================================================================
+# 2. DATABASE HELPERS (with Caching)
+# ==============================================================================
+
+@st.cache_resource
+def init_connection():
+    """Initializes and returns a connection to MongoDB."""
+    try:
+        client = MongoClient(st.secrets["mongo_uri"], tlsCAFile=certifi.where())
+        return client
+    except Exception as e:
+        st.error(f"Failed to connect to MongoDB. Check secrets and IP Access List. Error: {e}")
+        st.stop()
+
+@st.cache_resource
+def get_db():
+    """Returns the database instance."""
+    return init_connection().get_database("rendezvous")
+
 def setup_database():
-    if app_state_collection.count_documents({"key": "partner_names"}) == 0:
-        app_state_collection.insert_one({"key": "partner_names", "value": ["Partner 1", "Partner 2"]})
-    notes_collection.create_index([("timestamp", -1)])
+    """Sets up initial database state and indexes if they don't exist."""
+    db = get_db()
+    if db.app_state.count_documents({"key": "partner_names"}) == 0:
+        db.app_state.insert_one({"key": "partner_names", "value": ["Partner 1", "Partner 2"]})
+    db.love_notes.create_index([("timestamp", -1)])
+    db.moods.create_index([("partner", 1), ("date", -1)])
 
 setup_database()
 
-# --- Data Helper Functions (unchanged) ---
+@st.cache_data(ttl=60)
 def get_partner_names():
-    doc = app_state_collection.find_one({"key": "partner_names"})
+    doc = get_db().app_state.find_one({"key": "partner_names"})
     return doc['value'] if doc else ["Partner 1", "Partner 2"]
 
 def update_partner_names(p1, p2):
-    app_state_collection.update_one({"key": "partner_names"}, {"$set": {"value": [p1, p2]}}, upsert=True)
+    get_db().app_state.update_one({"key": "partner_names"}, {"$set": {"value": [p1, p2]}}, upsert=True)
+    st.cache_data.clear()
 
-def add_event(title, start_time, booker, is_urgent):
-    color = "#E74C3C" if is_urgent else "#D98880"
-    events_collection.insert_one({
+def add_event(title, start_time, booker, is_spontaneous, event_type, partner_colors):
+    base_colors = {
+        "intimate": "#E8B4CB" if is_spontaneous else "#D498B5", "date": "#87CEEB",
+        "self_care": "#98D8C8", "wellness": "#FFB3BA"
+    }
+    color = partner_colors.get(booker, base_colors.get(event_type, "#D498B5"))
+    get_db().events.insert_one({
         "title": title, "start": start_time.isoformat(), "backgroundColor": color,
-        "borderColor": color, "booker": booker, "is_urgent": is_urgent
+        "borderColor": color, "booker": booker, "is_spontaneous": is_spontaneous,
+        "event_type": event_type
     })
+    st.cache_data.clear()
 
-def add_blockout(title, start_time, end_time, all_day):
-    blockouts_collection.insert_one({
+def add_blockout(title, start_time, end_time, all_day, blockout_type):
+    color_map = {"health": "#FF9999", "work": "#B0B0B0", "family": "#D4C5B9", "personal": "#A7C7E7", "general": "#C0C0C0"}
+    color = color_map.get(blockout_type, "#C0C0C0")
+    get_db().blockouts.insert_one({
         "title": title, "start": start_time.isoformat(), "end": end_time.isoformat(),
-        "allDay": all_day, "backgroundColor": "#808B96", "borderColor": "#5D6D7E",
-        "display": "background"
+        "allDay": all_day, "backgroundColor": color, "borderColor": color,
+        "display": "background", "blockout_type": blockout_type
     })
+    st.cache_data.clear()
 
+@st.cache_data(ttl=30)
 def get_events():
-    events = list(events_collection.find())
-    for event in events:
-        event['_id'] = str(event['_id'])
-    return events
+    return [dict(event, _id=str(event['_id'])) for event in get_db().events.find()]
 
+@st.cache_data(ttl=30)
 def get_blockouts():
-    blockouts = list(blockouts_collection.find())
-    for blockout in blockouts:
-        blockout['_id'] = str(blockout['_id'])
-    return blockouts
+    return [dict(blockout, _id=str(blockout['_id'])) for blockout in get_db().blockouts.find()]
 
 def check_for_overlap(new_start, new_end):
-    all_blockouts = get_blockouts()
-    for blockout in all_blockouts:
+    for blockout in get_blockouts():
         block_start = datetime.datetime.fromisoformat(blockout['start'])
         block_end = datetime.datetime.fromisoformat(blockout['end'])
         if new_start < block_end and new_end > block_start:
@@ -83,237 +186,293 @@ def check_for_overlap(new_start, new_end):
     return None
 
 def add_love_note(author, message):
-    notes_collection.insert_one({
-        "author": author, "message": message, "timestamp": datetime.datetime.now(),
-        "read": False, "type": "note"
+    get_db().love_notes.insert_one({
+        "author": author, "message": message, "timestamp": datetime.datetime.now(), "type": "love_note"
     })
+    st.cache_data.clear()
 
-def add_booking_notification(message):
-    notes_collection.insert_one({
-        "message": message, "timestamp": datetime.datetime.now(),
-        "read": False, "type": "booking"
-    })
-
-def get_unread_notifications():
-    notifications = list(notes_collection.find({"read": False}).sort("timestamp", -1))
-    for notif in notifications:
-        notif['_id'] = str(notif['_id'])
-    return notifications
-
+@st.cache_data(ttl=10)
 def get_all_love_notes():
-    notes = list(notes_collection.find({"type": "note"}).sort("timestamp", -1))
-    for note in notes:
-        note['_id'] = str(note['_id'])
-    return notes
+    return list(get_db().love_notes.find({"type": "love_note"}).sort("timestamp", -1))
 
-def mark_notification_as_read(note_id):
-    notes_collection.update_one({"_id": ObjectId(note_id)}, {"$set": {"read": True}})
+def send_emergency_alert(sender, urgency, message):
+    get_db().love_notes.insert_one({
+        "sender": sender, "timestamp": datetime.datetime.now(), "type": "emergency_alert",
+        "urgency": urgency, "message": message, "seen": False
+    })
+    st.cache_data.clear()
 
-# --- Styling (with Forced Light Theme CSS) ---
-st.markdown("""
-<style>
-    /* --- NEW: Force Light Theme --- */
-    :root {
-        --primary-color: #D98880;
-        --background-color: #FDF8F5;
-        --secondary-background-color: #F4ECE6;
-        --text-color: #34495E;
-        --font: "sans serif";
-    }
+@st.cache_data(ttl=5)
+def get_unseen_emergency_alert():
+    return get_db().love_notes.find_one({"type": "emergency_alert", "seen": False})
 
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Lato:wght@400;700&display=swap');
-    
-    .stApp { 
-        background-color: var(--background-color); 
-        color: var(--text-color); 
-        font-family: 'Lato', sans-serif; 
-    }
-    
-    .block-container { padding: 1rem 1rem 2rem 1rem; }
-    h1 { font-family: 'Playfair Display', serif; color: #B05A5A; text-align: center; }
-    h2, h3 { font-family: 'Playfair Display', serif; color: #34495E; }
-    
-    .stButton>button { 
-        border: 2px solid var(--primary-color);
-        border-radius: 8px; 
-        background-color: transparent; 
-        color: var(--primary-color); 
-        padding: 10px 24px; 
-        font-weight: 700; 
-        transition: all 0.3s ease-in-out; 
-        text-transform: uppercase; 
-        letter-spacing: 1px; 
-    }
-    .stButton>button:hover { 
-        background-color: var(--primary-color); 
-        color: #FFFFFF; 
-        transform: translateY(-2px); 
-    }
-    
-    .button-urgent button { background-color: #E74C3C; color: white; border: none; font-weight: bold; }
-    .button-urgent button:hover { background-color: #C0392B; }
-    
-    .stForm, .fc { background-color: #FFFFFF; border-radius: 10px; padding: 25px; border: 1px solid #EAE0DA; }
-</style>
-""", unsafe_allow_html=True)
+def mark_emergency_as_seen(alert_id):
+    get_db().love_notes.update_one({"_id": ObjectId(alert_id)}, {"$set": {"seen": True}})
+    st.cache_data.clear()
 
+def log_mood(partner, date, energy, desire, stress, notes):
+    get_db().moods.update_one(
+        {"partner": partner, "date": date.isoformat()[:10]},
+        {"$set": {"energy": energy, "desire": desire, "stress": stress, "notes": notes, "timestamp": datetime.datetime.now()}},
+        upsert=True
+    )
+    st.cache_data.clear()
 
-# --- HEADER ---
-if os.path.exists(LOGO_IMAGE):
-    st.image(LOGO_IMAGE, width=150)
-else:
-    st.title("The Rendezvous")
+@st.cache_data(ttl=60)
+def get_all_moods():
+    return list(get_db().moods.find())
 
-# --- Mobile-First Tab Navigation ---
-dashboard_tab, calendar_tab, notes_tab = st.tabs(["🔥 Dashboard", "📅 Calendar", "💌 Love Notes"])
+# ==============================================================================
+# 3. UI HELPERS
+# ==============================================================================
 
+def get_partner_initials(name):
+    return "".join([part[0] for part in name.split()]).upper()
 
-# --- DASHBOARD TAB ---
-with dashboard_tab:
-    # IN-APP NOTIFICATION SYSTEM
-    unread_notifications = get_unread_notifications()
-    if unread_notifications:
-        st.subheader("🔔 New Alerts")
-        for notif in unread_notifications:
-            target_page = "Love Notes" if notif.get("type") == "note" else "Calendar"
-            button_text = "Read Note" if target_page == "Love Notes" else "View Booking"
-            if st.button(f"{notif['message']} → {button_text}", key=f"view_{notif['_id']}", use_container_width=True):
-                mark_notification_as_read(ObjectId(notif['_id']))
-                st.toast(f"Marked as read. Go to {target_page} to see.")
-                st.rerun()
-        st.markdown("---")
+def partner_colored_badge(partner_name, all_partner_names):
+    initials = get_partner_initials(partner_name)
+    color_class = "partner1" if partner_name == all_partner_names[0] else "partner2"
+    return f'<span class="partner-badge {color_class}">{initials}</span>'
 
-    # URGENT BOOKING
-    st.markdown('<div class="button-urgent">', unsafe_allow_html=True)
-    if st.button("Book a Fuck", use_container_width=True):
-        st.session_state.show_urgent_booking = not st.session_state.get('show_urgent_booking', False)
+# ==============================================================================
+# 4. MAIN APP LAYOUT & LOGIC
+# ==============================================================================
+
+# --- Get Partner Names for entire app ---
+partner_names = get_partner_names()
+p1_name, p2_name = partner_names
+css_vars = get_css_variables()
+partner_colors = {
+    p1_name: css_vars["--partner1-color"],
+    p2_name: css_vars["--partner2-color"]
+}
+
+# --- Sidebar for Settings ---
+with st.sidebar:
+    st.header("⚙️ Settings")
+    p1_name_input = st.text_input("Partner 1 Name", value=p1_name)
+    p2_name_input = st.text_input("Partner 2 Name", value=p2_name)
+    if st.button("Save Names", use_container_width=True):
+        update_partner_names(p1_name_input, p2_name_input)
+        st.success("Names updated!")
+        st.rerun()
+
+# --- Main Header ---
+col1, col2 = st.columns([3, 1])
+with col1:
+    if os.path.exists(LOGO_IMAGE):
+        st.image(LOGO_IMAGE, width=180)
+    else:
+        st.title("Our Connection Calendar")
+with col2:
+    st.write("")
+    st.markdown('<div class="emergency-button">', unsafe_allow_html=True)
+    if st.button("Emergency Connect 🔥", use_container_width=True):
+        st.session_state.show_emergency_modal = True
     st.markdown('</div>', unsafe_allow_html=True)
 
-    if st.session_state.get('show_urgent_booking', False):
-        with st.form("urgent_form"):
-            st.subheader("Quick & Urgent Booking")
-            booker = st.selectbox("Who's booking this?", get_partner_names())
-            date = st.date_input("Date", value=datetime.date.today())
-            time = st.time_input("Time", value=datetime.time(21, 0))
-            if st.form_submit_button("Confirm Booking 🔥", use_container_width=True):
-                final_dt = datetime.datetime.combine(date, time)
-                end_dt = final_dt + timedelta(hours=1)
-                conflicting_block = check_for_overlap(final_dt, end_dt)
-                if conflicting_block:
-                    st.error(f"Cannot book! Conflicts with: '{conflicting_block['title']}'")
-                else:
-                    add_event("Urgent Rendezvous 🔥", final_dt, booker, is_urgent=True)
-                    add_booking_notification(f"{booker} booked an Urgent Rendezvous!")
-                    st.success("It's a date! 🔥")
-                    st.session_state.show_urgent_booking = False
-                    st.rerun()
+# --- Emergency Modal Logic ---
+if 'show_emergency_modal' not in st.session_state:
+    st.session_state.show_emergency_modal = False
+if st.session_state.show_emergency_modal:
+    @st.dialog("🚨 Break Glass In Case of Emergency 🚨")
+    def show_emergency_dialog():
+        st.markdown("Send a **high-priority alert** to your partner when you feel a strong, immediate need to connect.")
+        sender = st.selectbox("This alert is from:", partner_names, key="emergency_sender")
+        urgency = st.radio("What's the urgency?",
+                           ["💕 **Thinking of you...** let's connect soon.", "🔥 **Urgent:** I need you now."], index=1)
+        message = st.text_input("Optional message:", placeholder="e.g., 'Had a tough day.'")
+        if st.button("SEND ALERT", use_container_width=True, type="primary"):
+            send_emergency_alert(sender, urgency, message)
+            st.session_state.show_emergency_modal = False
+            st.rerun()
+        if st.button("Cancel", use_container_width=True):
+            st.session_state.show_emergency_modal = False
+            st.rerun()
+    show_emergency_dialog()
+
+# --- Display Active Emergency Alert Banner ---
+active_alert = get_unseen_emergency_alert()
+if active_alert:
+    sender = active_alert.get('sender', 'Your partner')
+    alert_id = active_alert.get('_id')
+    urgency_msg = active_alert.get('urgency', 'Your partner wants to connect!')
+    st.error(f"🚨 **HIGH PRIORITY ALERT!** {urgency_msg.replace('**', '')} - Sent by {sender}", icon="🔥")
+    if st.button(f"I see it! Clear Alert", key=f"clear_alert_{alert_id}", use_container_width=True):
+        mark_emergency_as_seen(alert_id)
+        st.success("Alert cleared. Time to connect. 😉")
+        st.rerun()
     st.markdown("---")
 
-    # SPLIT RENDEZVOUS DISPLAY
-    now = datetime.datetime.now()
-    all_events = get_events()
-    all_upcoming = sorted([e for e in all_events if 'start' in e and datetime.datetime.fromisoformat(e['start']) > now], key=lambda x: datetime.datetime.fromisoformat(x['start']))
-    urgent_events = [e for e in all_upcoming if e.get("is_urgent")]
-    planned_events = [e for e in all_upcoming if not e.get("is_urgent")]
+# --- Main App Tabs ---
+dashboard_tab, calendar_tab, wellness_tab, notes_tab = st.tabs(
+    ["🏡 Dashboard", "📅 Our Calendar", "🌿 Our Wellness", "💌 Messages"]
+)
 
-    st.subheader("🍆 Fucks Booked")
-    if not urgent_events:
-        st.info("No urgent bookings. Maybe it's time to make one?")
-    else:
-        for event in urgent_events:
-            with st.container(border=True):
-                event_date = datetime.datetime.fromisoformat(event['start'])
-                st.markdown(f"**{event.get('booker', 'Someone')}** Booked a fuck on _{event_date.strftime('%A, %b %d at %I:%M %p')}_")
+# ==============================================================================
+# TAB 1: DASHBOARD
+# ==============================================================================
+with dashboard_tab:
+    st.header("Today's Dashboard")
+    st.markdown("---")
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.subheader("✨ Feeling Spontaneous?")
+        if st.button("Send a Spontaneous Invitation", use_container_width=True):
+            st.session_state.show_spontaneous_request = not st.session_state.get('show_spontaneous_request', False)
 
-    st.subheader("📅 Planned Dates")
-    if not planned_events:
-        st.info("No planned dates on the calendar.")
-    else:
-        for event in planned_events:
-            with st.container(border=True):
-                event_date = datetime.datetime.fromisoformat(event['start'])
-                st.markdown(f"**{event['title']}** on _{event_date.strftime('%A, %b %d at %I:%M %p')}_")
-                st.markdown(f"<small>Booked by: {event.get('booker', 'Unknown')}</small>", unsafe_allow_html=True)
-
-# --- CALENDAR TAB ---
-with calendar_tab:
-    with st.expander("Plan a New Date", expanded=True):
-        with st.form("new_rendezvous", clear_on_submit=True):
-            booker = st.selectbox("Who's booking this?", get_partner_names())
-            title = st.text_input("Date Idea", placeholder="e.g., Dinner at our spot")
-            date = st.date_input("Date")
-            start_time = st.time_input("Time")
-            if st.form_submit_button("Add to Calendar", use_container_width=True):
-                if title:
-                    final_dt = datetime.datetime.combine(date, start_time)
-                    end_dt = final_dt + timedelta(hours=1)
-                    conflicting_block = check_for_overlap(final_dt, end_dt)
-                    if conflicting_block:
-                        st.error(f"Cannot book! Conflicts with: '{conflicting_block['title']}'")
-                    else:
-                        add_event(title, final_dt, booker, is_urgent=False)
-                        add_booking_notification(f"{booker} planned '{title}'!")
-                        st.toast(f"'{title}' added!")
-                        st.rerun()
-    
-    with st.expander("Block Out Time"):
-        with st.form("blockout_form", clear_on_submit=True):
-            title = st.text_input("Reason", placeholder="e.g., Work, Period, Family visit")
-            all_day = st.checkbox("All-day event")
-            if all_day:
-                date = st.date_input("Date")
-                start_dt = datetime.datetime.combine(date, datetime.time.min)
-                end_dt = datetime.datetime.combine(date, datetime.time.max)
-            else:
-                col1, col2 = st.columns(2)
-                start_date = col1.date_input("Start Date")
-                start_time = col1.time_input("Start Time", value=datetime.time(9,0))
-                end_date = col2.date_input("End Date")
-                end_time = col2.time_input("End Time", value=datetime.time(17,0))
-                start_dt = datetime.datetime.combine(start_date, start_time)
-                end_dt = datetime.datetime.combine(end_date, end_time)
-            if st.form_submit_button("Block Out Period", use_container_width=True):
-                if title:
-                    add_blockout(title, start_dt, end_dt, all_day)
-                    st.toast("Time blocked out.")
+    if st.session_state.get('show_spontaneous_request', False):
+        with st.form("spontaneous_form"):
+            st.subheader("Create Your Invitation")
+            requester = st.selectbox("This invitation is from", partner_names)
+            vibe = st.text_input("What's the vibe?", placeholder="e.g., Passionate & Intense, Playful & Fun")
+            timing = st.selectbox("When?", ["Sometime tonight", "Soon", "This afternoon", "Tomorrow evening", "This weekend"])
+            if st.form_submit_button("Send Invitation 💕", use_container_width=True):
+                planned_time = datetime.datetime.now()
+                if "tonight" in timing.lower(): planned_time = planned_time.replace(hour=21, minute=0)
+                elif "tomorrow" in timing.lower(): planned_time += timedelta(days=1)
+                
+                if check_for_overlap(planned_time, planned_time + timedelta(hours=2)):
+                    st.error("That time conflicts with a blocked-out period.")
+                else:
+                    add_event(f"Spontaneous: {vibe}", planned_time, requester, True, "intimate", partner_colors)
+                    st.success("Your invitation has been sent! 💕✨")
+                    st.session_state.show_spontaneous_request = False
                     st.rerun()
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    all_calendar_items = get_events() + get_blockouts()
-    calendar(events=all_calendar_items)
+    with col2:
+        st.subheader("🗓️ Upcoming Time Together")
+        all_upcoming = sorted(
+            [e for e in get_events() if datetime.datetime.fromisoformat(e['start']) > datetime.datetime.now()],
+            key=lambda x: x['start']
+        )
+        if not all_upcoming:
+            st.info("The calendar is open! Time to plan your next connection.")
+        else:
+            for event in all_upcoming[:3]:
+                with st.container(border=True):
+                    event_date = datetime.datetime.fromisoformat(event['start'])
+                    icon = "🔥" if event.get("is_spontaneous") else "💕"
+                    booker = event.get('booker', 'Unknown')
+                    badge = partner_colored_badge(booker, partner_names)
+                    st.markdown(
+                        f"{badge} **{icon} {event['title']}**<br>"
+                        f"_{event_date.strftime('%A, %b %d at %I:%M %p')}_", unsafe_allow_html=True
+                    )
 
-# --- LOVE NOTES TAB ---
-with notes_tab:
-    with st.form("love_note_form", clear_on_submit=True):
-        st.subheader("Leave a Love Note")
-        author = st.selectbox("From", get_partner_names())
-        message = st.text_area("Message", placeholder="Thinking of you...")
-        if st.form_submit_button("Send Note", use_container_width=True):
-            if message:
-                add_love_note(author, message)
-                st.toast("Note sent!")
-                st.rerun()
-    
-    st.markdown("<hr>", unsafe_allow_html=True)
-    all_notes = get_all_love_notes()
-    if not all_notes:
-        st.info("The first note is yet to be written...")
-    else:
-        for note in all_notes:
+# ==============================================================================
+# TAB 2: CALENDAR
+# ==============================================================================
+with calendar_tab:
+    st.header("Our Shared Calendar")
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        with st.expander("📅 Plan Together Time", expanded=True):
+            with st.form("new_date", clear_on_submit=True):
+                planner = st.selectbox("Who's planning this?", partner_names)
+                event_title = st.text_input("Event Title", placeholder="E.g. Date Night")
+                event_type = st.selectbox("Event Type", ["intimate", "date", "self_care", "wellness"])
+                start_dt = st.date_input("Date", value=datetime.date.today())
+                start_time = st.time_input("Time", value=time(hour=20, minute=0))
+                duration = st.slider("Duration (hours)", 0.5, 6.0, 2.0, 0.5)
+                if st.form_submit_button("Add Event", use_container_width=True):
+                    start_datetime = datetime.datetime.combine(start_dt, start_time)
+                    end_datetime = start_datetime + timedelta(hours=duration)
+                    if check_for_overlap(start_datetime, end_datetime):
+                        st.error("This event conflicts with a blocked-out period.")
+                    else:
+                        add_event(event_title, start_datetime, planner, False, event_type, partner_colors)
+                        st.success("Event added!"); st.rerun()
+
+    with col2:
+        with st.expander("📵 Block Out Time", expanded=True):
+            with st.form("new_blockout", clear_on_submit=True):
+                blockout_title = st.text_input("Blockout Title", placeholder="E.g. Work Project")
+                blockout_type = st.selectbox("Blockout Type", ["general", "health", "work", "family", "personal"])
+                start_block_date = st.date_input("Start Date", value=datetime.date.today(), key='bsd')
+                start_block_time = st.time_input("Start Time", value=time(hour=9), key='bst')
+                end_block_date = st.date_input("End Date", value=datetime.date.today(), key='bed')
+                end_block_time = st.time_input("End Time", value=time(hour=17), key='bet')
+                if st.form_submit_button("Add Blockout", use_container_width=True):
+                    start_dt = datetime.datetime.combine(start_block_date, start_block_time)
+                    end_dt = datetime.datetime.combine(end_block_date, end_block_time)
+                    if start_dt >= end_dt:
+                        st.error("End time must be after start time.")
+                    else:
+                        add_blockout(blockout_title, start_dt, end_dt, False, blockout_type)
+                        st.success("Blockout added!"); st.rerun()
+
+    st.markdown("---")
+    calendar(events=get_events() + get_blockouts(), options=CALENDAR_OPTIONS)
+
+# ==============================================================================
+# TAB 3: WELLNESS
+# ==============================================================================
+with wellness_tab:
+    st.header("🌿 Wellness Hub")
+    st.markdown("A space to check in with yourselves and each other.")
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    for i, partner in enumerate(partner_names):
+        with col1 if i == 0 else col2:
             with st.container(border=True):
-                ts = note['timestamp'] if isinstance(note['timestamp'], datetime.datetime) else datetime.datetime.fromisoformat(note['timestamp'])
-                st.markdown(f"**From: {note['author']}** | <small>{ts.strftime('%b %d, %Y at %I:%M %p')}</small>", unsafe_allow_html=True)
-                st.write(f"> *{note['message']}*")
+                st.subheader(f"Log for {partner}")
+                today = datetime.date.today()
+                with st.form(f"mood_form_{partner}", clear_on_submit=True):
+                    energy = st.slider("Energy Level", 0, 10, 5, key=f"en_{partner}")
+                    desire = st.slider("Desire Level", 0, 10, 5, key=f"de_{partner}")
+                    stress = st.slider("Stress Level (inverted)", 0, 10, 5, key=f"st_{partner}", help="0=high stress, 10=no stress")
+                    notes = st.text_area("Notes (optional)", key=f"no_{partner}", placeholder="How are you feeling?")
+                    if st.form_submit_button("Save Wellness Data", use_container_width=True):
+                        log_mood(partner, today, energy, desire, stress, notes)
+                        st.success(f"Wellness data saved for {partner}!"); st.rerun()
 
-# --- App Settings ---
-st.markdown("---")
-with st.expander("⚙️ App Settings"):
-    partner_names = get_partner_names()
-    p1 = st.text_input("Partner 1", value=partner_names[0], key="p1_settings")
-    p2 = st.text_input("Partner 2", value=partner_names[1], key="p2_settings")
-    if st.button("Save Partner Names", use_container_width=True):
-        update_partner_names(p1, p2)
-        st.toast("Names updated!")
-        st.rerun()
+    st.markdown("---")
+    st.header("Wellness Trends")
+    mood_data = get_all_moods()
+    if not mood_data:
+        st.info("Log some wellness data above to see your trends over time!")
+    else:
+        df = pd.DataFrame(mood_data)
+        df['date'] = pd.to_datetime(df['date'])
+        df_melted = df.melt(id_vars=['date', 'partner'], value_vars=['energy', 'desire', 'stress'],
+                            var_name='metric', value_name='level')
+        chart = alt.Chart(df_melted).mark_line(point=True).encode(
+            x=alt.X('date:T', title='Date'), y=alt.Y('level:Q', title='Level (0-10)'),
+            color=alt.Color('partner:N', title='Partner'), strokeDash=alt.StrokeDash('metric:N', title='Metric'),
+            tooltip=['date:T', 'partner:N', 'metric:N', 'level:Q']
+        ).interactive().properties(title='Our Wellness Journey Over Time')
+        st.altair_chart(chart, use_container_width=True)
+
+# ==============================================================================
+# TAB 4: MESSAGES
+# ==============================================================================
+with notes_tab:
+    st.header("💌 Love Notes & Messages")
+    st.markdown("---")
+    with st.expander("💌 Send a new message", expanded=True):
+        with st.form("new_love_note", clear_on_submit=True):
+            author = st.selectbox("Who's writing?", partner_names)
+            message = st.text_area("Your Message", max_chars=1500, placeholder="Write something sweet, loving, or spontaneous!")
+            if st.form_submit_button("Send Message", use_container_width=True):
+                if message.strip():
+                    add_love_note(author, message.strip())
+                    st.success(f"Message sent!"); st.rerun()
+                else:
+                    st.error("Message cannot be empty.")
+
+    st.markdown("---")
+    st.subheader("Our Message History")
+    messages = get_all_love_notes()
+    if not messages:
+        st.info("No messages yet. Start by sending one above!")
+    else:
+        for msg in messages:
+            with st.container(border=True):
+                author = msg.get("author", "Unknown")
+                date_str = msg.get("timestamp", datetime.datetime.now()).strftime("%b %d, %Y at %I:%M %p")
+                badge = partner_colored_badge(author, partner_names)
+                st.markdown(f"{badge} **{author}** _wrote on {date_str}_:", unsafe_allow_html=True)
+                st.markdown(f"> {msg.get('message')}")
